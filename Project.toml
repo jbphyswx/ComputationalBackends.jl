@@ -1,0 +1,7 @@
+name = "ComputationalBackends"
+uuid = "5c6e2104-4040-447f-8fc0-66ec2223b019"
+version = "0.1.0"
+authors = ["Jordan Benjamin <jordantbenjamin@gmail.com>"]
+
+[compat]
+julia = "1.10"
