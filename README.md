@@ -1,14 +1,6 @@
 # ComputationalBackends.jl
 
-Zero-dependency Julia package providing a unified execution-backend type hierarchy for the
-[jbphyswx](https://github.com/jbphyswx) ecosystem.
-
-## Motivation
-
-Multiple packages (`StructureFunctions.jl`, `ScatteringTransforms.jl`,
-`CoarseGrainingEnergyFluxes.jl`, `FlowInvariantTransfer.jl`, …) independently defined
-near-identical backend type hierarchies. `ComputationalBackends.jl` is the single source of
-truth — downstream packages import these types instead of maintaining local copies.
+Zero-dependency Julia package defining dispatch types for execution-backend selection (parallelism, device, distribution).
 
 ## Exported Types
 
@@ -17,7 +9,7 @@ truth — downstream packages import these types instead of maintaining local co
 | Type | Description |
 |---|---|
 | `SerialBackend` | Serial single-threaded CPU (always available) |
-| `ThreadedBackend` | Multi-threaded CPU (OhMyThreads extension in consumer) |
+| `ThreadedBackend` | Multi-threaded CPU (e.g. via OhMyThreads.jl) |
 | `GPUBackend{B}` | GPU via KernelAbstractions, parameterized on device backend |
 | `AutoBackend` | Resolves to best available at runtime |
 
@@ -27,6 +19,8 @@ truth — downstream packages import these types instead of maintaining local co
 |---|---|
 | `DistributedBackend{Inner}` | Multi-process via Distributed.jl |
 | `MPIBackend{Inner, C}` | Multi-rank via MPI.jl (not CPU-only) |
+
+All types are subtypes of `AbstractExecutionBackend`.
 
 ### Helpers
 
