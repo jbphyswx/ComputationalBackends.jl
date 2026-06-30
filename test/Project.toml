@@ -1,3 +1,6 @@
 [deps]
 ComputationalBackends = "5c6e2104-4040-447f-8fc0-66ec2223b019"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[sources]
+ComputationalBackends = {path = ".."}
