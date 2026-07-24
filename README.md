@@ -1,47 +1,44 @@
 # ComputationalBackends.jl
 
-Zero-dependency Julia package defining dispatch types for execution-backend selection (parallelism, device, distribution).
+Zero-dependency dispatch types for where/how computation runs (serial, threaded, GPU, distributed, MPI).
 
-## Exported Types
+Dispatch on the abstracts so user subtypes work; use the concrete defaults as instances.
 
-### Local compute backends
+| Abstract | Default concrete |
+|----------|------------------|
+| `AbstractSerialBackend` | `SerialBackend` |
+| `AbstractThreadedBackend` | `ThreadedBackend` |
+| `AbstractGPUBackend` | `GPUBackend{B}` |
+| `AbstractDistributedBackend` | `DistributedBackend{Inner}` |
+| `AbstractMPIBackend` | `MPIBackend{Inner,C}` |
 
-| Type | Description |
-|---|---|
-| `SerialBackend` | Serial single-threaded CPU (always available) |
-| `ThreadedBackend` | Multi-threaded CPU (e.g. via OhMyThreads.jl) |
-| `GPUBackend{B}` | GPU via KernelAbstractions, parameterized on device backend |
-| `AutoBackend` | Resolves to best available at runtime |
+`Inner` on distributors must be `<: AbstractLocalBackend`. `AutoBackend` is not local.
 
-### Distribution wrappers (parametric over inner local backend)
+## Helpers
 
-| Type | Description |
-|---|---|
-| `DistributedBackend{Inner}` | Multi-process via Distributed.jl |
-| `MPIBackend{Inner, C}` | Multi-rank via MPI.jl (not CPU-only) |
-
-All types are subtypes of `AbstractExecutionBackend`.
-
-### Helpers
-
-| Function | Description |
-|---|---|
-| `local_backend(b)` | Unwrap distribution wrapper → inner backend |
-| `is_distributed(b)` | `true` for `DistributedBackend` / `MPIBackend` |
-| `resolve_backend(b)` | Resolve `AutoBackend` → concrete backend |
+| Function | Behavior |
+|----------|----------|
+| `local_backend(b)` | Unwrap distributors → local backend |
+| `is_distributed(b)` | `true` for distributed/MPI abstracts |
+| `is_local_backend(b)` | `true` for local abstracts |
+| `resolve_backend(b)` | Identity; `AutoBackend` → `SerialBackend()` |
+| `recommend_backend(; threaded)` | Interactive Threaded-vs-Serial (not for hot paths) |
+| `is_gpu_array(x)` | Default `false`; extend for device arrays |
 
 ## Usage
 
 ```julia
 using ComputationalBackends: ComputationalBackends as CB
 
-# Direct use
-backend = CB.SerialBackend()
+# Library methods dispatch on abstracts:
+#   compute!(::CB.AbstractSerialBackend, ...)
+#   compute!(::CB.AbstractThreadedBackend, ...)
 
-# Auto-resolution
-backend = CB.resolve_backend(CB.AutoBackend())
+compute(args...; backend = CB.SerialBackend())
+compute(args...; backend = CB.MPIBackend(CB.GPUBackend(cuda_backend)))
 
-# Composable wrappers
-backend = CB.DistributedBackend(CB.ThreadedBackend())   # multithreaded workers
-backend = CB.MPIBackend(CB.GPUBackend(cuda_backend))    # multi-GPU cluster
+# User subtype (e.g. serial policy by problem size):
+struct BlockedSerial <: CB.AbstractSerialBackend
+    block::Int
+end
 ```

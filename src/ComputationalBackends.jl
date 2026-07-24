@@ -1,170 +1,165 @@
 """
     ComputationalBackends
 
-Zero-dependency Julia package providing a unified execution-backend type hierarchy for the
-jbphyswx ecosystem.  Every package that needs to dispatch on *where/how* computation runs
-(serial CPU, multi-threaded, GPU, distributed, MPI) imports these types from here instead of
-defining its own copy.
+Dispatch tags for where/how computation runs: serial, threaded, GPU, distributed, or MPI.
 
-Two orthogonal concerns are encoded in the type tree:
+Hierarchy (subtype at the level you need):
 
-- **Local compute backend** — what one process/rank computes on:
-  [`SerialBackend`](@ref), [`ThreadedBackend`](@ref) (OhMyThreads ext),
-  [`GPUBackend{B}`](@ref) (KernelAbstractions ext).
+```
+AbstractExecutionBackend
+├── AbstractLocalBackend
+│   ├── AbstractSerialBackend     ← SerialBackend
+│   ├── AbstractThreadedBackend   ← ThreadedBackend
+│   └── AbstractGPUBackend        ← GPUBackend{B}
+├── AbstractDistributedBackend    ← DistributedBackend{Inner}
+├── AbstractMPIBackend            ← MPIBackend{Inner,C}
+└── AutoBackend
+```
 
-- **Distribution wrapper** — how work is split across processes, **parametric over the inner
-  local backend**: [`DistributedBackend{Inner}`](@ref) (Distributed ext),
-  [`MPIBackend{Inner,C}`](@ref) (MPI ext).  The parametric form makes layouts like
-  `DistributedBackend{GPUBackend{CUDABackend}}` (multi-node multi-GPU) and
-  `MPIBackend{ThreadedBackend}` (hybrid MPI+threads) expressible.
+Consumer methods should dispatch on the abstracts (`::AbstractSerialBackend`, …) so user-defined
+subtypes participate.  The concrete types above are the defaults.
 
-[`AutoBackend`](@ref) resolves to the best available local backend at runtime.
+[`AutoBackend`](@ref) is not local (cannot be `Inner`).  [`resolve_backend`](@ref)`(::AutoBackend)`
+returns [`SerialBackend`](@ref).  Prefer concrete backends on hot paths; use
+[`recommend_backend`](@ref) only at interactive entry points.
 
-Heavy backend *implementations* live in consumer-package extensions; this package only
-defines the dispatch types and a few pure helpers.
+This package defines tags and helpers only.  Kernel implementations live in consumer extensions.
 """
 module ComputationalBackends
 
-export AbstractExecutionBackend
+export AbstractExecutionBackend, AbstractLocalBackend
+export AbstractSerialBackend, AbstractThreadedBackend, AbstractGPUBackend
+export AbstractDistributedBackend, AbstractMPIBackend
 export SerialBackend, ThreadedBackend, GPUBackend, AutoBackend
 export DistributedBackend, MPIBackend
-export local_backend, is_distributed, resolve_backend
+export local_backend, is_distributed, is_local_backend
+export resolve_backend, recommend_backend
+export is_gpu_array
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Abstract root
+# Abstract roots
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
     AbstractExecutionBackend
 
-Supertype for all execution backends — local compute backends ([`SerialBackend`](@ref),
-[`ThreadedBackend`](@ref), [`GPUBackend`](@ref)) and distribution wrappers
-([`DistributedBackend`](@ref), [`MPIBackend`](@ref)).
+Supertype for all execution backends.
 """
 abstract type AbstractExecutionBackend end
 
+"""
+    AbstractLocalBackend <: AbstractExecutionBackend
+
+Per-process compute backends.  Distribution wrappers require `Inner <: AbstractLocalBackend`.
+"""
+abstract type AbstractLocalBackend <: AbstractExecutionBackend end
+
+"""
+    AbstractSerialBackend <: AbstractLocalBackend
+
+Serial CPU execution.  Subtype to carry policy (cache blocking, problem-size cutoffs, …).
+Default instance: [`SerialBackend`](@ref).
+"""
+abstract type AbstractSerialBackend <: AbstractLocalBackend end
+
+"""
+    AbstractThreadedBackend <: AbstractLocalBackend
+
+Shared-memory multithreaded execution.  Subtype for scheduler / `ntasks` / threadpool variants.
+Default instance: [`ThreadedBackend`](@ref).
+"""
+abstract type AbstractThreadedBackend <: AbstractLocalBackend end
+
+"""
+    AbstractGPUBackend <: AbstractLocalBackend
+
+Device execution.  Subtype for vendor- or stream-specific wrappers.
+Default instance: [`GPUBackend`](@ref).
+"""
+abstract type AbstractGPUBackend <: AbstractLocalBackend end
+
+"""
+    AbstractDistributedBackend <: AbstractExecutionBackend
+
+Multi-process distribution.  Default instance: [`DistributedBackend`](@ref).
+Custom subtypes must define [`local_backend`](@ref) if they are not `DistributedBackend`.
+"""
+abstract type AbstractDistributedBackend <: AbstractExecutionBackend end
+
+"""
+    AbstractMPIBackend <: AbstractExecutionBackend
+
+MPI multi-rank distribution.  Default instance: [`MPIBackend`](@ref).
+Custom subtypes must define [`local_backend`](@ref) if they are not `MPIBackend`.
+"""
+abstract type AbstractMPIBackend <: AbstractExecutionBackend end
+
 # ──────────────────────────────────────────────────────────────────────────────
-# Local compute backends
+# Default concrete local backends
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
-    SerialBackend <: AbstractExecutionBackend
+    SerialBackend <: AbstractSerialBackend
 
-Serial (CPU, single-threaded) execution.  Always available, no extension needed.
-
-This is the reference implementation that all other backends are validated against.
-
-# Examples
-```julia
-result = compute(args...; backend = SerialBackend())
-```
+Default serial CPU backend.  Always available.
 """
-struct SerialBackend <: AbstractExecutionBackend end
+struct SerialBackend <: AbstractSerialBackend end
 
 """
-    ThreadedBackend <: AbstractExecutionBackend
+    ThreadedBackend <: AbstractThreadedBackend
 
-Multi-threaded CPU execution (typically via OhMyThreads.jl in the consumer package's
-extension).
+Default multithreaded CPU backend (typically OhMyThreads in a consumer extension).
 
-Use when multiple CPU threads are available (`Threads.nthreads() > 1`) and shared-memory
-parallelism is suitable.
-
-# Examples
-```julia
-result = compute(args...; backend = ThreadedBackend())
-```
+Pass explicitly when a threaded implementation is loaded.  [`resolve_backend`](@ref) never selects
+this automatically.
 """
-struct ThreadedBackend <: AbstractExecutionBackend end
+struct ThreadedBackend <: AbstractThreadedBackend end
 
 """
-    GPUBackend{B} <: AbstractExecutionBackend
+    GPUBackend{B} <: AbstractGPUBackend
 
-GPU-accelerated execution via KernelAbstractions.jl.  Parameterized by the target GPU
-backend object `B` (e.g. `CUDA.CUDABackend()`, `KernelAbstractions.CPU()`).
-
-# Examples
-```julia
-using CUDA
-result = compute(args...; backend = GPUBackend(CUDABackend()))
-
-# CPU backend for testing parity:
-using KernelAbstractions: CPU
-result = compute(args...; backend = GPUBackend(CPU()))
-```
+Default GPU backend via KernelAbstractions, parameterized by device backend object `B`
+(e.g. `CUDA.CUDABackend()`, `KernelAbstractions.CPU()`).
 """
-struct GPUBackend{B} <: AbstractExecutionBackend
+struct GPUBackend{B} <: AbstractGPUBackend
     backend::B
 end
 
 """
     AutoBackend <: AbstractExecutionBackend
 
-Automatic backend selection based on runtime state.
+Interactive selector — not local, cannot be a distribution `Inner`.
 
-Default resolution order (via [`resolve_backend`](@ref)):
-1. `ThreadedBackend()` when `Threads.nthreads() > 1`
-2. `SerialBackend()` otherwise
-
-Consumer packages may override `resolve_backend` to add GPU or distributed detection.
-
-# Examples
-```julia
-result = compute(args...; backend = AutoBackend())   # chooses automatically
-```
+[`resolve_backend`](@ref)`(::AutoBackend)` → [`SerialBackend`](@ref).
 """
 struct AutoBackend <: AbstractExecutionBackend end
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Distribution wrappers (parametric over inner local backend)
+# Default concrete distribution wrappers
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
-    DistributedBackend{Inner <: AbstractExecutionBackend} <: AbstractExecutionBackend
+    DistributedBackend{Inner <: AbstractLocalBackend} <: AbstractDistributedBackend
     DistributedBackend(inner = SerialBackend())
 
-Distribute work across worker processes (via Distributed.jl), each running `inner` locally.
-Parametric over the inner local backend so that layouts like
-`DistributedBackend(ThreadedBackend())` (multithreaded workers) are expressible.
-
-# Examples
-```julia
-using Distributed; addprocs(4)
-result = compute(args...; backend = DistributedBackend())
-
-# hybrid distributed + threaded:
-result = compute(args...; backend = DistributedBackend(ThreadedBackend()))
-```
+Distributed.jl workers, each running `inner` locally.
 """
-struct DistributedBackend{Inner <: AbstractExecutionBackend} <: AbstractExecutionBackend
+struct DistributedBackend{Inner <: AbstractLocalBackend} <: AbstractDistributedBackend
     inner::Inner
 end
 DistributedBackend() = DistributedBackend(SerialBackend())
 
 """
-    MPIBackend{Inner <: AbstractExecutionBackend, C} <: AbstractExecutionBackend
+    MPIBackend{Inner <: AbstractLocalBackend, C} <: AbstractMPIBackend
     MPIBackend(inner = SerialBackend(); comm = nothing)
 
-Multi-rank execution via MPI.jl, parametric on the per-rank `inner` backend and communicator
-type `C`.  Each rank computes its share with `inner`, then partial results are combined
-(e.g. `MPI.Allreduce!`).  `comm = nothing` means the consumer extension uses
-`MPI.COMM_WORLD` (the core package cannot reference MPI).
-
-Not CPU-only: `MPIBackend(GPUBackend(CUDABackend()))` targets multi-GPU clusters;
-`MPIBackend(ThreadedBackend())` is hybrid MPI+threads.
-
-# Examples
-```julia
-using MPI; MPI.Init()
-result = compute(args...; backend = MPIBackend(ThreadedBackend()))
-```
+MPI ranks, each running `inner` locally.  `comm = nothing` → consumer uses `MPI.COMM_WORLD`.
 """
-struct MPIBackend{Inner <: AbstractExecutionBackend, C} <: AbstractExecutionBackend
+struct MPIBackend{Inner <: AbstractLocalBackend, C} <: AbstractMPIBackend
     inner::Inner
     comm::C
 end
-# `comm = nothing` ⇒ the MPI extension uses `MPI.COMM_WORLD` (core cannot reference MPI).
-MPIBackend(inner::AbstractExecutionBackend = SerialBackend(); comm = nothing) =
+MPIBackend(inner::AbstractLocalBackend = SerialBackend(); comm = nothing) =
     MPIBackend(inner, comm)
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -172,34 +167,63 @@ MPIBackend(inner::AbstractExecutionBackend = SerialBackend(); comm = nothing) =
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
-    local_backend(backend) -> AbstractExecutionBackend
+    is_local_backend(backend) -> Bool
 
-The per-process compute backend: the wrapped `inner` for a distribution wrapper, else the
-backend itself.
+`true` for any [`AbstractLocalBackend`](@ref).
 """
-local_backend(b::AbstractExecutionBackend) = b
-local_backend(b::DistributedBackend) = b.inner
-local_backend(b::MPIBackend) = b.inner
+is_local_backend(::AbstractExecutionBackend) = false
+is_local_backend(::AbstractLocalBackend) = true
+
+"""
+    local_backend(backend) -> AbstractLocalBackend
+
+Per-process compute backend.  Unwraps [`DistributedBackend`](@ref) / [`MPIBackend`](@ref)
+recursively.  Custom [`AbstractDistributedBackend`](@ref) / [`AbstractMPIBackend`](@ref) subtypes
+should define their own method.
+"""
+local_backend(b::AbstractLocalBackend) = b
+local_backend(b::DistributedBackend) = local_backend(b.inner)
+local_backend(b::MPIBackend) = local_backend(b.inner)
+function local_backend(b::AbstractExecutionBackend)
+    throw(ArgumentError(
+        "local_backend expects a local backend or DistributedBackend/MPIBackend; got $(typeof(b)). " *
+        "Custom distribution subtypes must define local_backend themselves. " *
+        "Resolve AutoBackend with resolve_backend / recommend_backend first.",
+    ))
+end
 
 """
     is_distributed(backend) -> Bool
 
-`true` if `backend` distributes work across processes (i.e. is a `DistributedBackend` or
-`MPIBackend`).
+`true` for [`AbstractDistributedBackend`](@ref) or [`AbstractMPIBackend`](@ref).
 """
 is_distributed(::AbstractExecutionBackend) = false
-is_distributed(::DistributedBackend) = true
-is_distributed(::MPIBackend) = true
+is_distributed(::AbstractDistributedBackend) = true
+is_distributed(::AbstractMPIBackend) = true
 
 """
     resolve_backend(backend) -> AbstractExecutionBackend
 
-Resolve [`AutoBackend`](@ref) to a concrete local backend instance; all other backends are
-returned as-is.
-
-Default resolution: `ThreadedBackend()` if `Threads.nthreads() > 1`, else `SerialBackend()`.
+Pass concrete backends through.  [`AutoBackend`](@ref) → [`SerialBackend`](@ref).
 """
 resolve_backend(backend::AbstractExecutionBackend) = backend
-resolve_backend(::AutoBackend) = Threads.nthreads() > 1 ? ThreadedBackend() : SerialBackend()
+resolve_backend(::AutoBackend) = SerialBackend()
+
+"""
+    recommend_backend(; threaded::Bool = Threads.nthreads() > 1) -> AbstractLocalBackend
+
+Interactive helper: [`ThreadedBackend`](@ref) if `threaded`, else [`SerialBackend`](@ref).
+Not for hot paths (Union return).
+"""
+function recommend_backend(; threaded::Bool = Threads.nthreads() > 1)
+    return threaded ? ThreadedBackend() : SerialBackend()
+end
+
+"""
+    is_gpu_array(x) -> Bool
+
+`true` if `x` is a GPU/device array.  Defaults to `false`.  Extend for device array types.
+"""
+is_gpu_array(::Any) = false
 
 end # module ComputationalBackends
