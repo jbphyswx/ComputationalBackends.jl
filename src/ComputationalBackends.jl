@@ -20,8 +20,8 @@ Consumer methods should dispatch on the abstracts (`::AbstractSerialBackend`, �
 subtypes participate.  The concrete types above are the defaults.
 
 [`AutoBackend`](@ref) is not local (cannot be `Inner`).  [`resolve_backend`](@ref)`(::AutoBackend)`
-returns [`SerialBackend`](@ref).  Prefer concrete backends on hot paths; use
-[`recommend_backend`](@ref) only at interactive entry points.
+selects [`ThreadedBackend`](@ref) when `Threads.nthreads() > 1`, else [`SerialBackend`](@ref).
+Prefer concrete backends on hot paths.
 
 This package defines tags and helpers only.  Kernel implementations live in consumer extensions.
 """
@@ -33,7 +33,7 @@ export AbstractDistributedBackend, AbstractMPIBackend
 export SerialBackend, ThreadedBackend, GPUBackend, AutoBackend
 export DistributedBackend, MPIBackend
 export local_backend, is_distributed, is_local_backend
-export resolve_backend, recommend_backend
+export resolve_backend
 export is_gpu_array
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -110,8 +110,7 @@ struct SerialBackend <: AbstractSerialBackend end
 
 Default multithreaded CPU backend (typically OhMyThreads in a consumer extension).
 
-Pass explicitly when a threaded implementation is loaded.  [`resolve_backend`](@ref) never selects
-this automatically.
+Also selected by [`resolve_backend`](@ref)`(::AutoBackend)` when `Threads.nthreads() > 1`.
 """
 struct ThreadedBackend <: AbstractThreadedBackend end
 
@@ -128,9 +127,11 @@ end
 """
     AutoBackend <: AbstractExecutionBackend
 
-Interactive selector — not local, cannot be a distribution `Inner`.
+Entry-point selector — not local, cannot be a distribution `Inner`.
 
-[`resolve_backend`](@ref)`(::AutoBackend)` → [`SerialBackend`](@ref).
+[`resolve_backend`](@ref)`(::AutoBackend)` → [`ThreadedBackend`](@ref) if
+`Threads.nthreads() > 1`, else [`SerialBackend`](@ref). Return type is therefore
+`Union{SerialBackend,ThreadedBackend}`; pin a concrete backend on hot paths.
 """
 struct AutoBackend <: AbstractExecutionBackend end
 
@@ -188,7 +189,7 @@ function local_backend(b::AbstractExecutionBackend)
     throw(ArgumentError(
         "local_backend expects a local backend or DistributedBackend/MPIBackend; got $(typeof(b)). " *
         "Custom distribution subtypes must define local_backend themselves. " *
-        "Resolve AutoBackend with resolve_backend / recommend_backend first.",
+        "Resolve AutoBackend with resolve_backend first.",
     ))
 end
 
@@ -204,20 +205,12 @@ is_distributed(::AbstractMPIBackend) = true
 """
     resolve_backend(backend) -> AbstractExecutionBackend
 
-Pass concrete backends through.  [`AutoBackend`](@ref) → [`SerialBackend`](@ref).
+Pass concrete backends through.  [`AutoBackend`](@ref) → [`ThreadedBackend`](@ref) if
+`Threads.nthreads() > 1`, else [`SerialBackend`](@ref). Auto’s return type is
+`Union{SerialBackend,ThreadedBackend}` — pin a concrete backend on hot paths.
 """
 resolve_backend(backend::AbstractExecutionBackend) = backend
-resolve_backend(::AutoBackend) = SerialBackend()
-
-"""
-    recommend_backend(; threaded::Bool = Threads.nthreads() > 1) -> AbstractLocalBackend
-
-Interactive helper: [`ThreadedBackend`](@ref) if `threaded`, else [`SerialBackend`](@ref).
-Not for hot paths (Union return).
-"""
-function recommend_backend(; threaded::Bool = Threads.nthreads() > 1)
-    return threaded ? ThreadedBackend() : SerialBackend()
-end
+resolve_backend(::AutoBackend) = Threads.nthreads() > 1 ? ThreadedBackend() : SerialBackend()
 
 """
     is_gpu_array(x) -> Bool

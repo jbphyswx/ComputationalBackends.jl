@@ -108,14 +108,11 @@ Test.@testset "ComputationalBackends.jl" begin
         Test.@test CB.resolve_backend(CB.ThreadedBackend()) isa CB.ThreadedBackend
         Test.@test CB.resolve_backend(CB.GPUBackend(:x)) isa CB.GPUBackend
         Test.@test CB.resolve_backend(CB.DistributedBackend()) isa CB.DistributedBackend
-        Test.@test CB.resolve_backend(CB.AutoBackend()) isa CB.SerialBackend
-        Test.@inferred CB.resolve_backend(CB.AutoBackend())
+        auto = CB.resolve_backend(CB.AutoBackend())
+        Test.@test auto isa Union{CB.SerialBackend, CB.ThreadedBackend}
+        Test.@test auto === (Threads.nthreads() > 1 ? CB.ThreadedBackend() : CB.SerialBackend())
         Test.@inferred CB.resolve_backend(CB.SerialBackend())
-    end
-
-    Test.@testset "recommend_backend" begin
-        Test.@test CB.recommend_backend(; threaded = false) isa CB.SerialBackend
-        Test.@test CB.recommend_backend(; threaded = true) isa CB.ThreadedBackend
+        Test.@inferred CB.resolve_backend(CB.ThreadedBackend())
     end
 
     Test.@testset "is_gpu_array default" begin
