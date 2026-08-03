@@ -6,14 +6,16 @@ Dispatch tags for where/how computation runs: serial, threaded, GPU, distributed
 Hierarchy (subtype at the level you need):
 
 ```
-AbstractExecutionBackend
-├── AbstractLocalBackend
-│   ├── AbstractSerialBackend     ← SerialBackend
-│   ├── AbstractThreadedBackend   ← ThreadedBackend
-│   └── AbstractGPUBackend        ← GPUBackend{B}
-├── AbstractDistributedBackend    ← DistributedBackend{Inner}
-├── AbstractMPIBackend            ← MPIBackend{Inner,C}
-└── AutoBackend
+AbstractComputationalBackend
+└── AbstractExecutionBackend
+│   ├── AbstractLocalBackend
+│   │   ├── AbstractSerialBackend     ← SerialBackend
+│   │   ├── AbstractThreadedBackend   ← ThreadedBackend
+│   │   └── AbstractGPUBackend        ← GPUBackend{B}
+│   ├── AbstractDistributedBackend    ← DistributedBackend{Inner}
+│   ├── AbstractMPIBackend            ← MPIBackend{Inner,C}
+│   └── AbstractAutoBackend
+└── ...
 ```
 
 Consumer methods should dispatch on the abstracts (`::AbstractSerialBackend`, …) so user-defined
@@ -26,26 +28,22 @@ Prefer concrete backends on hot paths.
 This package defines tags and helpers only.  Kernel implementations live in consumer extensions.
 """
 module ComputationalBackends
-
+export AbstractComputationalBackend
 export AbstractExecutionBackend, AbstractLocalBackend
-export AbstractSerialBackend, AbstractThreadedBackend, AbstractGPUBackend
-export AbstractDistributedBackend, AbstractMPIBackend
-export SerialBackend, ThreadedBackend, GPUBackend, AutoBackend
-export DistributedBackend, MPIBackend
-export local_backend, is_distributed, is_local_backend
-export resolve_backend
-export is_gpu_array
+export AbstractSerialBackend, AbstractThreadedBackend, AbstractGPUBackend, AbstractDistributedBackend, AbstractMPIBackend, AbstractAutoBackend
+export SerialBackend, ThreadedBackend, GPUBackend, AutoBackend, DistributedBackend, MPIBackend
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Abstract roots
 # ──────────────────────────────────────────────────────────────────────────────
+abstract type AbstractComputationalBackend end
 
 """
     AbstractExecutionBackend
 
 Supertype for all execution backends.
 """
-abstract type AbstractExecutionBackend end
+abstract type AbstractExecutionBackend <: AbstractComputationalBackend end
 
 """
     AbstractLocalBackend <: AbstractExecutionBackend
@@ -125,7 +123,7 @@ struct GPUBackend{B} <: AbstractGPUBackend
 end
 
 """
-    AutoBackend <: AbstractExecutionBackend
+    AutoBackend <: AbstractAutoBackend
 
 Entry-point selector — not local, cannot be a distribution `Inner`.
 
@@ -133,7 +131,7 @@ Entry-point selector — not local, cannot be a distribution `Inner`.
 `Threads.nthreads() > 1`, else [`SerialBackend`](@ref). Return type is therefore
 `Union{SerialBackend,ThreadedBackend}`; pin a concrete backend on hot paths.
 """
-struct AutoBackend <: AbstractExecutionBackend end
+struct AutoBackend <: AbstractAutoBackend end
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Default concrete distribution wrappers
@@ -209,8 +207,18 @@ Pass concrete backends through.  [`AutoBackend`](@ref) → [`ThreadedBackend`](@
 `Threads.nthreads() > 1`, else [`SerialBackend`](@ref). Auto’s return type is
 `Union{SerialBackend,ThreadedBackend}` — pin a concrete backend on hot paths.
 """
+# function resolve_backend end
 resolve_backend(backend::AbstractExecutionBackend) = backend
-resolve_backend(::AutoBackend) = Threads.nthreads() > 1 ? ThreadedBackend() : SerialBackend()
+resolve_backend(::AbstractAutoBackend) = error("resolve_backend(::AutoBackend) not defined; 
+    either explicitly opt into default_resolve_auto_backend() or define your own resolve_backend(::AutoBackend) in your module. 
+    Be careful and use qualified imports to avoid commiitting type piracy.")
+"""
+    This is explicilty a convenience.
+    We do not in general assume how a package might wish to resolve AutoBackend,
+    so we do not define a default method for it.
+    This is available for opting into
+"""
+default_resolve_auto_backend(::AbstractAutoBackend) = (Threads.nthreads() > 1) ? ThreadedBackend() : SerialBackend()
 
 """
     is_gpu_array(x) -> Bool
