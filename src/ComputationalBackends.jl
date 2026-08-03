@@ -92,6 +92,13 @@ Custom subtypes must define [`local_backend`](@ref) if they are not `MPIBackend`
 """
 abstract type AbstractMPIBackend <: AbstractExecutionBackend end
 
+"""
+    AbstractAutoBackend <: AbstractExecutionBackend
+Auto-selectinng backend. Default instance: [`AutoBackend`](@ref).  
+Custom subtypes must define [`local_backend`](@ref) if they are not `AutoBackend`.
+"""
+abstract type AbstractAutoBackend <: AbstractExecutionBackend end
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Default concrete local backends
 # ──────────────────────────────────────────────────────────────────────────────
