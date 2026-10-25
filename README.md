@@ -14,15 +14,20 @@ Dispatch on the abstracts so user subtypes work; use the concrete defaults as in
 
 `Inner` on distributors must be `<: AbstractLocalBackend`. `AutoBackend` is not local.
 
+What `AutoBackend` resolves to is each consumer's policy: a consumer resolves it with a function of
+its own, which may look at the problem (size, grid, loaded extensions).
+
 ## Helpers
+
+Unexported; call them qualified, e.g. `CB.local_backend(b)`.
 
 | Function | Behavior |
 |----------|----------|
 | `local_backend(b)` | Unwrap distributors → local backend |
 | `is_distributed(b)` | `true` for distributed/MPI abstracts |
 | `is_local_backend(b)` | `true` for local abstracts |
-| `resolve_backend(b)` | Identity; `AutoBackend` → `ThreadedBackend` if `Threads.nthreads() > 1`, else `SerialBackend` |
-| `is_gpu_array(x)` | Default `false`; extend for device arrays |
+| `resolve_backend(b)` | Identity; throws `ArgumentError` for `AutoBackend` |
+| `default_resolve_auto_backend(b)` | Opt-in Auto policy: `ThreadedBackend` if `Threads.nthreads() > 1`, else `SerialBackend` |
 
 ## Usage
 

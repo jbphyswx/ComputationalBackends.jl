@@ -108,16 +108,17 @@ Test.@testset "ComputationalBackends.jl" begin
         Test.@test CB.resolve_backend(CB.ThreadedBackend()) isa CB.ThreadedBackend
         Test.@test CB.resolve_backend(CB.GPUBackend(:x)) isa CB.GPUBackend
         Test.@test CB.resolve_backend(CB.DistributedBackend()) isa CB.DistributedBackend
-        auto = CB.resolve_backend(CB.AutoBackend())
-        Test.@test auto isa Union{CB.SerialBackend, CB.ThreadedBackend}
-        Test.@test auto === (Threads.nthreads() > 1 ? CB.ThreadedBackend() : CB.SerialBackend())
         Test.@inferred CB.resolve_backend(CB.SerialBackend())
         Test.@inferred CB.resolve_backend(CB.ThreadedBackend())
+        Test.@test_throws ArgumentError CB.resolve_backend(CB.AutoBackend())
     end
 
-    Test.@testset "is_gpu_array default" begin
-        Test.@test CB.is_gpu_array(rand(3)) === false
-        Test.@test CB.is_gpu_array(1) === false
+    Test.@testset "default_resolve_auto_backend" begin
+        struct MyAuto <: CB.AbstractAutoBackend end
+        expected = Threads.nthreads() > 1 ? CB.ThreadedBackend() : CB.SerialBackend()
+        Test.@test CB.default_resolve_auto_backend(CB.AutoBackend()) === expected
+        Test.@test CB.default_resolve_auto_backend(MyAuto()) === expected
+        Test.@test_throws ArgumentError CB.resolve_backend(MyAuto())
     end
 
 end

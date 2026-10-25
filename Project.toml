@@ -7,4 +7,4 @@ authors = ["Jordan Benjamin <jordantbenjamin@gmail.com>"]
 projects = ["test"]
 
 [compat]
-julia = "1.10"
+julia = "1.11"
